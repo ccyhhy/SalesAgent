@@ -1,0 +1,6 @@
+# 【必填】请将 sk-xxxxxxxx 替换为您在 DeepSeek 申请的真实 API Key
+API_KEY = "sk-7741fce5b57c480bb807e659ee514f96" 
+
+# API 地址 (默认 DeepSeek，无需修改)
+BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+MODEL_NAME = "qwen-max"

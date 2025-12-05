@@ -1,0 +1,11 @@
+# === 隐私与安全忽略名单 (绝对不能传) ===
+config.py
+browser_data/
+proxy_auth_plugin/
+debug_plugin/
+__pycache__/
+*.pyc
+
+# === 数据文件忽略名单 (数据是资产，不传) ===
+leads.xlsx
+leads_analyzed*.xlsx
