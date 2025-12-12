@@ -12,17 +12,7 @@ class Crawler:
         co.no_imgs(True)
         co.mute(True)
         
-        # ====================================================
-        # 【青果隧道代理配置】
-        # ====================================================
-        self.PROXY_HOST = "tun-ovhwip.qg.net"
-        self.PROXY_PORT = "12611"
-        self.PROXY_USER = "FE6BFA1F"
-        self.PROXY_PASS = "45D5FE7050B7"
-        
-        # ====================================================
-        # 【核心修改：混合双打配置】
-        # ====================================================
+
         
         # 1. 强制浏览器走代理 (原生参数，最稳，浏览器无法忽略)
         co.set_argument(f'--proxy-server={self.PROXY_HOST}:{self.PROXY_PORT}')
