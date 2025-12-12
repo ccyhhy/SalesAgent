@@ -1,78 +1,130 @@
+# crawl_manager.py
+# 2025-12-12 最终安全版
+# 功能：适配快代理隧道，自动处理认证，V2插件防弹窗
+
 from DrissionPage import ChromiumPage, ChromiumOptions
 import time
-import random
 import urllib.parse
-import config
+import config  # 读取本地配置
 import os
 import shutil
 
 class Crawler:
     def __init__(self):
+        print("\n🚀 [启动] 正在初始化浏览器...")
+        
         co = ChromiumOptions()
-        co.no_imgs(True)
-        co.mute(True)
+        co.no_imgs(True)  # 不加载图片
+        co.mute(True)     # 静音
         
+        # ============================================================
+        # 1. 代理配置 (使用 config 中的变量)
+        # ============================================================
+        if hasattr(config, 'PROXY_HOST') and config.PROXY_HOST:
+            print(f"   📋 读取代理 -> {config.PROXY_HOST}:{config.PROXY_PORT}")
+            
+            # A. 强制设置代理服务器
+            co.set_argument(f'--proxy-server={config.PROXY_HOST}:{config.PROXY_PORT}')
+            
+            # B. 加载自动认证插件 (Manifest V2 - 彻底解决弹窗)
+            if hasattr(config, 'PROXY_USER') and config.PROXY_USER:
+                self.plugin_path = self._create_auth_plugin(config.PROXY_USER, config.PROXY_PASS)
+                co.add_extension(self.plugin_path)
+                print(f"   🔌 [插件] 自动认证模块已加载")
+        else:
+            print("   ⚠️ 未检测到代理配置，使用直连...")
 
+        # ============================================================
+        # 2. 抗干扰配置 (适配校园网/梯子环境)
+        # ============================================================
+        co.set_argument('--no-sandbox')
+        co.set_argument('--disable-gpu')
+        co.set_argument('--ignore-certificate-errors')
         
-        # 1. 强制浏览器走代理 (原生参数，最稳，浏览器无法忽略)
-        co.set_argument(f'--proxy-server={self.PROXY_HOST}:{self.PROXY_PORT}')
+        # 禁用 QUIC 和 WebRTC，防止连接重置和IP泄露
+        co.set_argument('--disable-quic')
+        co.set_argument('--disable-webrtc')
         
-        # 2. 加载“只负责填密码”的插件 (解决弹窗问题)
-        self.plugin_path = self._create_auth_plugin(self.PROXY_USER, self.PROXY_PASS)
-        co.add_extension(self.plugin_path)
-        
-        # 3. 浏览器记忆
+        # 伪装去自动化特征
+        co.set_argument('--disable-blink-features=AutomationControlled')
+
+        # 3. 指定用户数据目录
         user_data_path = os.path.join(os.getcwd(), 'browser_data')
         co.set_user_data_path(user_data_path)
         
         try:
             self.page = ChromiumPage(co)
-            self.page.set.load_mode.eager()
-            print(f"🌐 浏览器已启动 (原生代理+插件认证)")
+            # 设置 30秒 超时
+            self.page.set.timeouts(30)
             
-            # 【强制自检】启动时立刻查一次 IP，让你眼见为实
-            print("   🕵️‍♂️ 正在验证代理连接...", end="")
-            self.page.get('http://httpbin.org/ip', timeout=10)
-            # 获取页面显示的 IP
-            ip_info = self.page.ele('tag:body').text
-            print(f" -> {ip_info}")
+            print(f"   ✅ 浏览器已启动")
+            
+            # 【自检环节】
+            print("   🕵️‍♂️ 正在验证网络...", end="")
+            self.page.get('http://httpbin.org/ip', retry=1, show_errmsg=False, timeout=15)
+            if "origin" in self.page.html:
+                print(" -> 通畅!")
+            else:
+                print(" -> (无响应，尝试继续)")
             
         except Exception as e:
-            print(f"\n❌ 启动自检失败: {e} (可能是代理超时或配置错误)")
+            print(f"\n   ❌ 启动失败: {e}")
+            print("   💡 提示: 校园网用户请确保梯子开启了 [TUN模式] 和 [全局模式]。")
 
     def _create_auth_plugin(self, user, password):
         """
-        生成一个【纯粹】的认证插件
-        它不再设置代理地址(因为上面用参数设了)，只负责填密码。
+        生成 Chrome 认证插件 (Manifest V2)
         """
         plugin_path = os.path.join(os.getcwd(), 'proxy_auth_plugin')
         
+        # 清理旧插件
         if os.path.exists(plugin_path):
-            shutil.rmtree(plugin_path)
+            try: shutil.rmtree(plugin_path)
+            except: pass
         os.makedirs(plugin_path)
 
+        # V2 版本 Manifest (最稳)
         manifest_json = """
         {
             "version": "1.0.0",
-            "manifest_version": 3,
+            "manifest_version": 2,
             "name": "Chrome Proxy Auth Helper",
-            "permissions": ["proxy", "webRequest", "webRequestBlocking"],
-            "host_permissions": ["<all_urls>"],
-            "background": {"service_worker": "background.js"}
+            "permissions": [
+                "proxy", "tabs", "unlimitedStorage", "storage", 
+                "<all_urls>", "webRequest", "webRequestBlocking"
+            ],
+            "background": { "scripts": ["background.js"] },
+            "minimum_chrome_version":"22.0.0"
         }
         """
 
-        # 这个脚本只做一件事：听到要密码，就填进去
+        # 背景脚本 (需要读取 config 中的 host/port)
         background_js = f"""
+        var config = {{
+            mode: "fixed_servers",
+            rules: {{
+                singleProxy: {{
+                    scheme: "http",
+                    host: "{config.PROXY_HOST}",
+                    port: parseInt({config.PROXY_PORT})
+                }},
+                bypassList: ["localhost"]
+            }}
+        }};
+
+        chrome.proxy.settings.set({{value: config, scope: "regular"}}, function() {{}});
+
+        function callbackFn(details) {{
+            return {{
+                authCredentials: {{
+                    username: "{user}",
+                    password: "{password}"
+                }}
+            }};
+        }}
+
         chrome.webRequest.onAuthRequired.addListener(
-            function(details) {{
-                return {{
-                    authCredentials: {{
-                        username: "{user}",
-                        password: "{password}"
-                    }}
-                }};
-            }},
+            callbackFn,
             {{urls: ["<all_urls>"]}},
             ['blocking']
         );
@@ -86,85 +138,65 @@ class Crawler:
         return plugin_path
 
     def search_and_crawl(self, company_name):
-        """带重试机制的任务执行"""
-        max_retries = 3
-        
-        for attempt in range(max_retries):
-            try:
-                return self._execute_task(company_name)
-            
-            except Exception as e:
-                print(f" (⚠️ 异常: {str(e)[:30]}...)")
-                
-                if attempt < max_retries - 1:
-                    print("   🔄 强制重启浏览器换 IP...")
-                    self._start_browser() 
-                    time.sleep(2)
-                else:
-                    return f"【失败】多次重试无效"
+        """执行搜索和抓取"""
+        if not hasattr(self, 'page') or not self.page: return "浏览器未启动"
 
-    def _start_browser(self):
-        """重启浏览器逻辑"""
-        if self.page:
-            try: self.page.quit()
-            except: pass
-        
-        # 重启时必须重新走一遍配置流程
-        self.__init__()
-
-    def _execute_task(self, company_name):
-        if not self.page or not self.page.process_id:
-            raise Exception("浏览器已断开")
-
-        page = self.page
+        print(f"   🔍 搜索: {company_name}...")
         abstract = ""
         website_text = ""
         
-        # --- Step 1: 搜索 ---
-        query = urllib.parse.quote(f"{company_name} 官网")
-        page.get(f"{config.SEARCH_ENGINE_URL}{query}", retry=1) 
-        
-        if "安全验证" in page.title or page.ele('text:网络不给力'):
-            raise Exception("触发百度验证码") 
-
-        # 抓摘要
         try:
-            res = page.eles('css:#content_left .result', timeout=2)
+            # 1. 百度搜索
+            query = urllib.parse.quote(f"{company_name} 官网")
+            self.page.get(f"{config.SEARCH_ENGINE_URL}{query}", retry=3, interval=2, timeout=30)
+            
+            # 验证码处理
+            if "安全验证" in self.page.title or "wappass" in self.page.url:
+                print("   ⚠️ 触发验证码，等待 15 秒...")
+                time.sleep(15)
+
+            # 抓摘要
+            res = self.page.eles('css:#content_left .result', timeout=3)
             for r in res[:3]: abstract += r.text + "\n"
-        except: pass
 
-        # --- Step 2: 进站 ---
-        target_link = None
-        try:
-            res_list = page.eles('css:#content_left .result', timeout=2)
+            # 2. 进官网
+            target_link = None
+            res_list = self.page.eles('css:#content_left .result', timeout=3)
             for res in res_list[:5]:
                 title = res.ele('tag:h3').text
-                if any(x in title for x in ['招聘', '爱企查', '天眼查', '企查查', '58同城', '小红书', '知乎', '贴吧', '百科']):
+                # 排除非官网链接
+                if any(x in title for x in ['招聘', '爱企查', '天眼查', '企查查', '58', '百科']):
                     continue
                 target_link = res.ele('tag:a')
                 break
             
             if target_link:
-                print("-> 🚀", end="")
+                print("   🔗 进官网...", end="")
                 target_link.click()
-                page.wait.new_tab()
-                new_tab = page.latest_tab
+                
+                self.page.wait.new_tab()
+                new_tab = self.page.latest_tab
+                
                 try:
-                    new_tab.wait.ele('tag:body', timeout=10)
+                    new_tab.wait.ele('tag:body', timeout=20)
                     new_tab.scroll.to_bottom()
-                    time.sleep(1)
+                    time.sleep(2)
                     website_text = new_tab.ele('tag:body').text
-                    website_text = website_text.replace('\n', ' ')
+                    website_text = '\n'.join([l.strip() for l in website_text.split('\n') if l.strip()])
                 except:
-                    website_text = "加载超时"
+                    website_text = "官网加载超时"
+                
                 new_tab.close()
+                print(" 完成")
             else:
-                print("-> ⚠️", end="")
-                website_text = "无官网"
-        except:
-            if len(page.tabs) > 1: page.latest_tab.close()
+                print(" (无官网链接)")
+                website_text = "未找到官网链接"
 
-        return f"【百度摘要】\n{abstract}\n\n【官网】\n{website_text}"
+        except Exception as e:
+            print(f"   ❌ 抓取中断: {e}")
+            website_text = f"Error: {e}"
+
+        return f"【百度摘要】\n{abstract}\n\n【官网内容】\n{website_text[:5000]}"
 
     def close(self):
         try: self.page.quit()

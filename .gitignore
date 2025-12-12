@@ -1,11 +1,19 @@
-# === 隐私与安全忽略名单 (绝对不能传) ===
+# === 🚨 核心机密 (绝对不能上传) ===
 config.py
+api
+secrets.py
+*.key
+*.pem
+
+# === 运行缓存与数据 (不需要上传) ===
+__pycache__/
+*.pyc
 browser_data/
 proxy_auth_plugin/
 debug_plugin/
-__pycache__/
-*.pyc
+logs/
 
-# === 数据文件忽略名单 (数据是资产，不传) ===
+# === 业务数据 (保护客户隐私) ===
 leads.xlsx
 leads_analyzed*.xlsx
+*.csv
